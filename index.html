@@ -80,7 +80,7 @@ function analyse(dets, vw, vh, now) {
 // the count that has held for the last 1.5 s, close up. null while it is still changing
 function steadyCount(now) {
   const r = obs.filter(o => now - o.t < 1500 && o.near);
-  if (r.length < 4) return null;
+  if (r.length < 3) return null;
   const f = {};
   for (const o of r) f[o.n] = (f[o.n] || 0) + 1;
   const [n, c] = Object.entries(f).sort((a, b) => b[1] - a[1])[0];
@@ -103,12 +103,12 @@ function updateTracks(items, now) {
 
 // ---- the task: arms itself, pays only once the stack is verified ---------------------------
 function step(now, dt) {
-  const A = now - S.At < 450 ? S.A : null, sc = steadyCount(now);
+  const A = now - S.At < 900 ? S.A : null, sc = steadyCount(now);   // slow phones detect only a few times a second
   if (A && A.near) S.lastNear = now;
   if (S.phase === 'scan') {
     if (sc != null && sc >= 2) Object.assign(S, { phase: 'task', nStart: sc, progress: 0, filmed: 0, hold: 0, started: now, lastProgress: now });
   } else if (S.phase === 'task') {
-    const onTask = now - S.lastNear < 800;
+    const onTask = now - S.lastNear < 1200;
     if (onTask) S.filmed += dt;                          // footage counts only while the cups are in view, close up
     if (sc != null) {
       if (sc > S.nStart) S.nStart = sc;
@@ -128,7 +128,7 @@ function step(now, dt) {
   // one line of guidance, always the most useful one
   const items = A ? A.items.length : 0;
   if (S.phase === 'scan') S.msg = !items ? 'Look at the cups' : !A.near ? 'Move closer' : sc === 1 ? 'Waiting for the next task' : 'Scanning';
-  else if (S.phase === 'task') S.msg = now - S.lastNear > 800 ? (items ? 'Move closer' : 'Look at the cups') : S.hold > 0 ? 'Hold still' : 'Stack the cups into one';
+  else if (S.phase === 'task') S.msg = now - S.lastNear > 1200 ? (items ? 'Move closer' : 'Look at the cups') : S.hold > 0 ? 'Hold still' : 'Stack the cups into one';
 }
 
 // ---- drawing: white only ----------------------------------------------------------------
@@ -256,7 +256,7 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 
 let last = performance.now(), lastDet = 0, lastTs = 0;
 function frame(now) {
-  const dt = Math.min(.1, (now - last) / 1000); last = now;
+  const dt = Math.min(.5, (now - last) / 1000); last = now;   // slow phones draw few frames, time must still add up
   if (detector && video.readyState >= 2 && now - lastDet > 66) {
     lastDet = now;
     const t0 = performance.now(), ts = Math.max(lastTs + 1, Math.round(now)); lastTs = ts;
