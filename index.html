@@ -7,450 +7,278 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Earn &amp; Save">
-<meta name="theme-color" content="#111111">
+<meta name="theme-color" content="#000000">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icon-180.png">
 <title>Earn &amp; Save</title>
 <style>
-:root{--terra:#D97757;--deep:#A84F30;--ink:#1F1E1D;--cream:#FFF4E4;
-  --round:ui-rounded,"SF Pro Rounded","Arial Rounded MT Bold","Nunito","Trebuchet MS",system-ui,sans-serif}
-*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-html,body{margin:0;height:100%;background:#000;overflow:hidden;color:#fff;font-family:var(--round);-webkit-user-select:none;user-select:none;touch-action:none}
+html,body{margin:0;height:100%;background:#000;overflow:hidden;-webkit-user-select:none;user-select:none;touch-action:none}
 #stage{position:fixed;inset:0;display:flex}
 .eye{position:relative;flex:1;overflow:hidden;background:#000}
 .eye video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
 .eye canvas{position:absolute;inset:0;width:100%;height:100%}
-#eyeR{display:none}
-body.stereo #eyeR{display:block}
-body.stereo .eye+.eye{border-left:2px solid #000}
-
-#start{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;padding:4vmin;background:radial-gradient(120% 90% at 20% 0%,#8E3E22,#3a1a10 60%,#140b08)}
-#card{width:min(92vw,620px);text-align:center}
-#card h1{margin:0;font-size:min(9vw,46px);font-weight:900;letter-spacing:.01em}
-#card h1 span{color:#FBE3BE}
-#task{margin:4vmin 0 3vmin;padding:3.2vmin 4vmin;border-radius:5vmin;background:linear-gradient(180deg,var(--terra),var(--deep));border:3px solid #fff;box-shadow:0 10px 30px rgba(0,0,0,.45)}
-#task b{display:block;font-size:min(7vw,34px);font-weight:900}
-#task p{margin:1.2vmin 0 0;font-size:min(4vw,18px);font-weight:700;line-height:1.3;opacity:.95}
-#go{font:inherit;font-size:min(8vw,36px);font-weight:900;color:#fff;padding:2.4vmin 12vmin;border-radius:9vmin;border:4px solid #fff;background:linear-gradient(180deg,#3FB66B,#23864a);box-shadow:0 8px 24px rgba(0,0,0,.5)}
-#ops{margin-top:4vmin;display:flex;gap:2vmin;justify-content:center;flex-wrap:wrap}
-#ops button{font:inherit;font-size:min(3.4vw,15px);font-weight:800;color:#FBE3BE;background:rgba(0,0,0,.35);border:1.5px solid rgba(251,227,190,.6);border-radius:99px;padding:1.4vmin 3.4vmin}
-#note{margin-top:2.6vmin;font-size:min(3vw,13px);opacity:.7;line-height:1.35}
-#turn{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:#140b08;font-size:6vmin;font-weight:900;text-align:center;padding:8vmin}
+.eye+.eye{border-left:2px solid #000}
 </style>
 </head>
 <body>
-<div id="stage">
-  <div class="eye" id="eyeL"><video playsinline muted autoplay></video><canvas></canvas></div>
-  <div class="eye" id="eyeR"><video playsinline muted autoplay></video><canvas></canvas></div>
-</div>
+<div id="stage"></div>
+<script type="module">
+import { FilesetResolver, ObjectDetector } from './vendor/vision_bundle.mjs';
 
-<div id="start"><div id="card">
-  <h1>Earn <span>&amp;</span> Save</h1>
-  <div id="task"><b>&#129681; Push in the chairs</b>
-    <p>Your glass films while you tidy. Robots learn from your footage.</p>
-    <p>Keep the table tag in view.</p></div>
-  <button id="go">Start</button>
-  <div id="ops"><button id="lens">Lenses: off</button><button id="voice">Voice: on</button><button id="cal">Calibrate</button></div>
-  <div id="note">Hold the glass level, then press Start. You have 3 seconds to put it on.</div>
-</div></div>
-<div id="turn">Turn your glass sideways</div>
-
-<script src="vendor/cv.js"></script>
-<script src="vendor/svd.js"></script>
-<script src="vendor/aruco.js"></script>
-<script src="vendor/posit1.js"></script>
-<script>
-'use strict';
-const $ = id => document.getElementById(id);
+// ---- settings: none on screen. Change them in the address only -------------------------
 const Q = new URLSearchParams(location.search);
-const store = { get(k, d) { try { const v = localStorage.getItem('glass.' + k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
-                set(k, v) { try { localStorage.setItem('glass.' + k, JSON.stringify(v)); } catch (e) {} } };
-
-// ---- settings: URL beats saved beats default -----------------------------------------
 const CFG = {
-  tagMM: 120,                                     // printed black square, see print/training_tags.pdf
-  fx: +(Q.get('fx') || store.get('fx', .72)),     // focal length / long side of the frame, iPhone main camera
-  inCm: +(Q.get('in') || store.get('inCm', 32)),  // tag-to-table-edge distance that counts as pushed in
-  stereo: Q.has('stereo') ? Q.get('stereo') === '1' : store.get('stereo', false),
-  voice: Q.has('voice') ? Q.get('voice') !== '0' : store.get('voice', true),
+  eyes: Q.get('eyes') === '2' ? 2 : 1,          // 2 = side by side, for a viewer with lenses
   debug: Q.has('debug'),
-  tableIds: [0, 5], chairIds: [1, 2, 3, 4]
+  score: +(Q.get('score') || .2),               // detector confidence floor
+  near: +(Q.get('near') || .1),                 // a cup must fill this share of the frame width (about 60 cm away) before anything is judged
+  hold: +(Q.get('hold') || 1.2),                // seconds the finished stack must stay still
+  delegate: Q.get('cpu') === '1' ? 'CPU' : 'GPU'
 };
 const TOKENS_PER_S = 833, CENTS_PER_S = .17, RESET_S = 1800;   // canon rates
+// big things are never cups. Labels are not trusted otherwise: the detector often names a cup a kite or a phone
+const EXCLUDE = new Set(['person', 'dining table', 'chair', 'couch', 'bed', 'laptop', 'tv', 'keyboard', 'refrigerator', 'oven', 'sink', 'toilet', 'bench', 'car', 'bus', 'truck', 'train', 'airplane', 'boat']);
+const FONT = '-apple-system,"SF Pro Text","Helvetica Neue",Helvetica,Arial,sans-serif';
 
-// ---- vision: ArUco tags, pose by POSIT ------------------------------------------------
-const PW = 1280;
-let PH = 540, posit = null;
-const proc = document.createElement('canvas');
-const pctx = proc.getContext('2d', { willReadFrequently: true });
-const detector = new AR.Detector({ dictionaryName: 'ARUCO_MIP_36h12', maxHammingDistance: 4 });
-// same steps as the library, with a wider threshold window, steadier on soft phone frames
-detector.detect = function (image) {
-  CV.grayscale(image, this.grey); CV.adaptiveThreshold(this.grey, this.thres, 3, 7);
-  this.contours = CV.findContours(this.thres, this.binary);
-  this.candidates = this.notTooNear(this.clockwiseCorners(this.findCandidates(this.contours, image.width * .01, .05, 10)), 10);
-  return this.findMarkers(this.grey, this.candidates, 49);
+// ---- stage -----------------------------------------------------------------------------
+const stage = document.getElementById('stage');
+const eyes = Array.from({ length: CFG.eyes }, () => {
+  const d = document.createElement('div'), v = document.createElement('video'), c = document.createElement('canvas');
+  d.className = 'eye'; v.muted = true; v.autoplay = true; v.playsInline = true; v.setAttribute('playsinline', '');
+  d.append(v, c); stage.append(d); return { v, c };
+});
+const video = eyes[0].v;
+
+// ---- state -----------------------------------------------------------------------------
+const S = { phase: 'boot', msg: '', nStart: 0, progress: 0, filmed: 0, hold: 0, started: 0, lastProgress: 0, lastNear: 0, doneAt: 0, credit: null, A: null, At: 0, ms: 0 };
+let detector = null, tracks = [], nextId = 1;
+const obs = [];
+
+const overlapMin = (a, b) => {
+  const ix = Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)), iy = Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
+  return ix * iy / Math.max(1, Math.min(a.w * a.h, b.w * b.h));
 };
 
-function setFrame(vw, vh) {
-  PH = Math.round(PW * vh / vw);
-  proc.width = PW; proc.height = PH;
-  posit = new POS.Posit(CFG.tagMM, CFG.fx * Math.max(PW, PH));
-}
-const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
-const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-const perim = m => m.corners.reduce((s, p, i, c) => s + Math.hypot(p.x - c[(i + 1) % 4].x, p.y - c[(i + 1) % 4].y), 0);
-
-function pose(m) {
-  const p = posit.pose(m.corners.map(c => ({ x: c.x - PW / 2, y: PH / 2 - c.y })));
-  return { R: p.bestRotation, t: p.bestTranslation };
-}
-// distance (cm) from a chair tag to the line through the table tag, along the table edge
-function edgeDistance(chair, table) {
-  let x = [table.R[0][0], table.R[1][0], table.R[2][0]];
-  const n = Math.hypot(...x); x = x.map(v => v / n);
-  const d = sub(chair.t, table.t), a = dot(d, x);
-  return Math.hypot(d[0] - a * x[0], d[1] - a * x[1], d[2] - a * x[2]) / 10;
-}
-function measure(img) {
-  const found = detector.detect(img), out = { table: null, chairs: [] };
-  for (const m of found) {
-    if (CFG.tableIds.includes(m.id)) { if (!out.table || perim(m) > perim(out.table.m)) out.table = { m }; }
-    else if (CFG.chairIds.includes(m.id)) out.chairs.push({ id: m.id, m });
+// what is on the bench: cup-sized objects, merged when two labels land on one thing
+function analyse(dets, vw, vh, now) {
+  const items = [], hands = [];
+  for (const d of dets.slice().sort((a, b) => b.categories[0].score - a.categories[0].score)) {
+    const n = d.categories[0].categoryName, b = d.boundingBox, box = { x: b.originX, y: b.originY, w: b.width, h: b.height };
+    if (n === 'person') { hands.push(box); continue; }
+    if (EXCLUDE.has(n)) continue;
+    if (box.w / vw < .025 || box.w / vw > .35 || box.h / vh > .6) continue;
+    if (items.some(k => overlapMin(k, box) > .5)) continue;
+    items.push(box);
   }
-  if (out.table) out.table.pose = pose(out.table.m);
-  for (const c of out.chairs) { c.pose = pose(c.m); if (out.table) c.dist = edgeDistance(c.pose, out.table.pose); }
-  return out;
+  const ws = items.map(i => i.w / vw).sort((a, b) => a - b);
+  const near = items.length > 0 && ws[ws.length >> 1] >= CFG.near;
+  const handsOver = hands.some(h => items.some(i => overlapMin(i, h) > .15));
+  obs.push({ t: now, n: items.length, near, hands: handsOver });
+  while (obs.length && now - obs[0].t > 3000) obs.shift();
+  return { items, near, handsOver };
 }
-
-// homography from tag-plane centimetres to frame pixels, for drawing in the tag's own perspective
-function homography(m) {
-  const s = CFG.tagMM / 20, src = [[-s, s], [s, s], [s, -s], [-s, -s]], A = [], b = [];
-  for (let i = 0; i < 4; i++) {
-    const [X, Y] = src[i], { x: u, y: v } = m.corners[i];
-    A.push([X, Y, 1, 0, 0, 0, -u * X, -u * Y]); b.push(u);
-    A.push([0, 0, 0, X, Y, 1, -v * X, -v * Y]); b.push(v);
-  }
-  for (let c = 0; c < 8; c++) {                      // Gaussian elimination
-    let p = c; for (let r = c + 1; r < 8; r++) if (Math.abs(A[r][c]) > Math.abs(A[p][c])) p = r;
-    [A[c], A[p]] = [A[p], A[c]]; [b[c], b[p]] = [b[p], b[c]];
-    for (let r = c + 1; r < 8; r++) { const f = A[r][c] / A[c][c]; for (let k = c; k < 8; k++) A[r][k] -= f * A[c][k]; b[r] -= f * b[c]; }
-  }
-  const h = Array(8);
-  for (let r = 7; r >= 0; r--) { let s2 = b[r]; for (let k = r + 1; k < 8; k++) s2 -= A[r][k] * h[k]; h[r] = s2 / A[r][r]; }
-  return (X, Y) => { const w = h[6] * X + h[7] * Y + 1; return [(h[0] * X + h[1] * Y + h[2]) / w, (h[3] * X + h[4] * Y + h[5]) / w]; };
+// the count that has held for the last 1.5 s, close up. null while it is still changing
+function steadyCount(now) {
+  const r = obs.filter(o => now - o.t < 1500 && o.near);
+  if (r.length < 4) return null;
+  const f = {};
+  for (const o of r) f[o.n] = (f[o.n] || 0) + 1;
+  const [n, c] = Object.entries(f).sort((a, b) => b[1] - a[1])[0];
+  return c / r.length >= .7 ? +n : null;
 }
-
-// ---- task state ----------------------------------------------------------------------
-const S = { phase: 'idle', chairs: {}, inPlay: new Set(), work: 0, hold: 0, last: null, lastAt: 0, tableAt: 0, start: 0, pops: [], said: {}, line: '', countdown: 0 };
-function resetTask() {
-  Object.assign(S, { chairs: {}, inPlay: new Set(), work: 0, hold: 0, last: null, lastAt: 0, tableAt: 0, pops: [], said: {}, line: 'Push in the chairs. Keep the table tag in view.' });
-}
-function judge(meas, now) {
-  S.last = meas; S.lastAt = now;
-  if (meas.table) S.tableAt = now;
-  for (const c of meas.chairs) {
-    const k = S.chairs[c.id] || (S.chairs[c.id] = { state: null, vin: 0, vout: 0, dist: null, seenAt: 0 });
-    k.seenAt = now;
-    if (c.dist == null) continue;
-    k.dist = k.dist == null ? c.dist : k.dist * .55 + c.dist * .45;
-    if (k.dist < CFG.inCm) { k.vin++; k.vout = 0; } else if (k.dist > CFG.inCm + 6) { k.vout++; k.vin = 0; }
-    if (k.vout >= 3 && k.state !== 'out') {
-      k.state = 'out'; S.inPlay.add(c.id);
-      if (S.phase === 'work') voiceOnce('out' + c.id, `Push chair ${c.id} in.`);
+function updateTracks(items, now) {
+  for (const t of tracks) t.hit = false;
+  for (const it of items) {
+    let best = null, bd = Infinity;
+    for (const t of tracks) {
+      if (t.hit) continue;
+      const d = Math.hypot(t.tgt.x + t.tgt.w / 2 - it.x - it.w / 2, t.tgt.y + t.tgt.h / 2 - it.y - it.h / 2);
+      if (d < bd) { bd = d; best = t; }
     }
-    if (k.vin >= 3 && k.state !== 'in') {
-      const was = k.state; k.state = 'in';
-      if (was === 'out' && S.phase === 'work') { pop('Good!'); chime(); say(`Chair ${c.id}, in. Lovely.`); S.line = `Chair ${c.id} is in. Lovely.`; }
+    if (best && bd < Math.max(it.w, it.h) * .9) { best.tgt = it; best.seen = now; best.hit = true; }
+    else tracks.push({ id: nextId++, tgt: it, box: { ...it }, seen: now, hit: true });
+  }
+  tracks = tracks.filter(t => now - t.seen < 700);
+}
+
+// ---- the task: arms itself, pays only once the stack is verified ---------------------------
+function step(now, dt) {
+  const A = now - S.At < 450 ? S.A : null, sc = steadyCount(now);
+  if (A && A.near) S.lastNear = now;
+  if (S.phase === 'scan') {
+    if (sc != null && sc >= 2) Object.assign(S, { phase: 'task', nStart: sc, progress: 0, filmed: 0, hold: 0, started: now, lastProgress: now });
+  } else if (S.phase === 'task') {
+    const onTask = now - S.lastNear < 800;
+    if (onTask) S.filmed += dt;                          // footage counts only while the cups are in view, close up
+    if (sc != null) {
+      if (sc > S.nStart) S.nStart = sc;
+      const p = Math.max(0, Math.min(S.nStart - 1, S.nStart - sc));
+      if (p !== S.progress) { S.progress = p; S.lastProgress = now; }
     }
+    const one = A && A.items.length === 1 ? A.items[0] : null;
+    const verifying = sc === 1 && one && one.h / one.w >= .95 && !A.handsOver && onTask;
+    S.hold = verifying ? S.hold + dt : Math.max(0, S.hold - dt * 2);
+    if (S.hold >= CFG.hold) {
+      S.phase = 'done'; S.doneAt = now;
+      S.credit = { secs: S.filmed, mtok: S.filmed * TOKENS_PER_S / 1e6, dollars: S.filmed * CENTS_PER_S / 100, cups: S.nStart };
+    } else if (now - S.lastProgress > 45000 || now - S.started > 120000) { S.phase = 'fail'; S.doneAt = now; }
+  } else if (S.phase === 'done' || S.phase === 'fail') {
+    if (now - S.doneAt > (S.phase === 'done' ? 9000 : 5000)) { S.phase = 'scan'; tracks = []; nextId = 1; }
   }
-}
-function progress() {
-  const ids = [...S.inPlay].sort();
-  return { ids, done: ids.filter(i => S.chairs[i].state === 'in').length };
-}
-
-// ---- voice and sound -----------------------------------------------------------------
-let voice = null, actx = null;
-function pickVoice() {
-  const vs = speechSynthesis.getVoices();
-  voice = vs.find(v => /en-AU/i.test(v.lang)) || vs.find(v => /en-GB/i.test(v.lang)) || vs.find(v => /^en/i.test(v.lang)) || null;
-}
-if ('speechSynthesis' in window) { pickVoice(); speechSynthesis.onvoiceschanged = pickVoice; }
-function say(t) {
-  if (!CFG.voice || !('speechSynthesis' in window)) return;
-  speechSynthesis.cancel();
-  const u = new SpeechSynthesisUtterance(t); if (voice) u.voice = voice; u.rate = 1.02; speechSynthesis.speak(u);
-}
-function voiceOnce(key, t, gap = 9000) {
-  const now = performance.now();
-  if (S.said[key] && now - S.said[key] < gap) return;
-  S.said[key] = now; S.line = t; say(t);
-}
-function chime(final) {
-  try {
-    actx = actx || new (window.AudioContext || window.webkitAudioContext)();
-    const notes = final ? [660, 880, 1175] : [880, 1320];
-    notes.forEach((f, i) => {
-      const o = actx.createOscillator(), g = actx.createGain(), t = actx.currentTime + i * .11;
-      o.frequency.value = f; o.type = 'sine'; g.gain.setValueAtTime(.0001, t); g.gain.exponentialRampToValueAtTime(.25, t + .02); g.gain.exponentialRampToValueAtTime(.0001, t + .32);
-      o.connect(g).connect(actx.destination); o.start(t); o.stop(t + .35);
-    });
-  } catch (e) {}
-}
-function pop(t) { S.pops.push({ t, at: performance.now() }); }
-
-// ---- camera ----------------------------------------------------------------------------
-const videos = [...document.querySelectorAll('video')], canvases = [...document.querySelectorAll('.eye canvas')];
-let stream = null, wake = null;
-async function openCamera() {
-  if (stream) return true;
-  try {
-    stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } } });
-  } catch (e) { alert('Your glass needs its camera. Allow it in the browser settings.'); return false; }
-  for (const v of videos) { v.srcObject = stream; v.play().catch(() => {}); }
-  await new Promise(r => { const f = () => videos[0].videoWidth ? r() : requestAnimationFrame(f); f(); });
-  setFrame(videos[0].videoWidth, videos[0].videoHeight);
-  return true;
-}
-async function keepAwake() {
-  try { if ('wakeLock' in navigator) wake = await navigator.wakeLock.request('screen'); } catch (e) {}
-}
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && S.phase !== 'idle') keepAwake(); });
-
-// ---- flow ------------------------------------------------------------------------------
-function applyLayout() { document.body.classList.toggle('stereo', CFG.stereo); }
-function labels() { $('lens').textContent = 'Lenses: ' + (CFG.stereo ? 'on' : 'off'); $('voice').textContent = 'Voice: ' + (CFG.voice ? 'on' : 'off'); }
-$('lens').onclick = () => { CFG.stereo = !CFG.stereo; store.set('stereo', CFG.stereo); labels(); };
-$('voice').onclick = () => { CFG.voice = !CFG.voice; store.set('voice', CFG.voice); labels(); };
-labels();
-
-async function begin(mode) {
-  if ('speechSynthesis' in window) speechSynthesis.speak(new SpeechSynthesisUtterance(''));   // iOS unlocks speech on a tap
-  chime(); keepAwake();
-  try { await document.documentElement.requestFullscreen?.(); } catch (e) {}
-  try { await screen.orientation?.lock?.('landscape'); } catch (e) {}
-  if (!await openCamera()) return;
-  applyLayout();
-  $('start').style.display = 'none';
-  resetTask();
-  if (mode === 'cal') { S.phase = 'cal'; S.line = 'Push every chair in, then tap the screen to save.'; return; }
-  S.phase = 'count'; S.countdown = performance.now(); say('Put on your glass.');
-}
-$('go').onclick = () => begin('task');
-$('cal').onclick = () => begin('cal');
-
-function finish() {
-  S.phase = 'done'; S.doneAt = performance.now(); chime(true);
-  say('All chairs in. The robots thank you.');
-}
-function toStart() { S.phase = 'idle'; $('start').style.display = 'flex'; document.body.classList.remove('stereo'); }
-
-// taps: save calibration, start again after the receipt. A long press anywhere goes back to the start screen.
-let pressAt = 0;
-addEventListener('pointerdown', () => { pressAt = performance.now(); });
-addEventListener('pointerup', () => {
-  const long = performance.now() - pressAt > 1200;
-  if (S.phase === 'idle') return;
-  if (long) { toStart(); return; }
-  if (S.phase === 'cal') {
-    const ds = Object.values(S.chairs).map(c => c.dist).filter(d => d != null);
-    if (ds.length) { CFG.inCm = Math.round(Math.min(60, Math.max(18, Math.max(...ds) + 9))); store.set('inCm', CFG.inCm); S.line = `Saved. Pushed in means under ${CFG.inCm} cm. Hold to go back.`; }
-    else S.line = 'No chair tags and table tag in view yet.';
-  } else if (S.phase === 'done' && performance.now() - S.doneAt > 1500) toStart();
-});
-
-// ---- drawing ---------------------------------------------------------------------------
-const RAYS = [[190,75,58],[350,75,48],[470,130,62],[555,275,36],[555,368,42],[505,488,25],[432,522,40],[295,562,42],[175,525,36],[115,445,40],[55,312,32],[105,175,52]];
-const STAR = (() => {
-  const cx = 322, cy = 322, hub = 80, p = new Path2D(); p.arc(cx, cy, hub, 0, Math.PI * 2);
-  for (const [tx, ty, w] of RAYS) {
-    const dx = tx - cx, dy = ty - cy, L = Math.hypot(dx, dy), ux = dx / L, uy = dy / L, nx = -uy, ny = ux, t = w / 2, b = Math.max(8, w * .32);
-    const bx = cx + ux * hub * .55, by = cy + uy * hub * .55, ex = tx - ux * t, ey = ty - uy * t;
-    p.moveTo(bx + nx * b, by + ny * b); p.lineTo(ex + nx * t, ey + ny * t); p.arc(ex, ey, t, Math.atan2(ny, nx), Math.atan2(-ny, -nx)); p.lineTo(bx - nx * b, by - ny * b); p.closePath();
-  }
-  return p;
-})();
-function rr(c, x, y, w, h, r) { c.beginPath(); c.moveTo(x + r, y); c.arcTo(x + w, y, x + w, y + h, r); c.arcTo(x + w, y + h, x, y + h, r); c.arcTo(x, y + h, x, y, r); c.arcTo(x, y, x + w, y, r); c.closePath(); }
-function txt(c, s, x, y, size, col, weight = 900, align = 'left', stroke = 0) {
-  c.font = `${weight} ${size}px ${getComputedStyle(document.body).getPropertyValue('--round')}`;
-  c.textAlign = align; c.textBaseline = 'middle';
-  if (stroke) { c.lineJoin = 'round'; c.lineWidth = stroke; c.strokeStyle = '#fff'; c.strokeText(s, x, y); }
-  c.fillStyle = col; c.fillText(s, x, y);
-}
-function bracket(c, pts, col, lw) {      // corner brackets around a quad, the look of a training annotation
-  c.strokeStyle = col; c.lineWidth = lw; c.lineCap = 'round';
-  for (let i = 0; i < 4; i++) {
-    const p = pts[i], a = pts[(i + 1) % 4], b = pts[(i + 3) % 4];
-    c.beginPath(); c.moveTo(p[0] + (a[0] - p[0]) * .22, p[1] + (a[1] - p[1]) * .22); c.lineTo(p[0], p[1]); c.lineTo(p[0] + (b[0] - p[0]) * .22, p[1] + (b[1] - p[1]) * .22); c.stroke();
-  }
+  // one line of guidance, always the most useful one
+  const items = A ? A.items.length : 0;
+  if (S.phase === 'scan') S.msg = !items ? 'Look at the cups' : !A.near ? 'Move closer' : sc === 1 ? 'Waiting for the next task' : 'Scanning';
+  else if (S.phase === 'task') S.msg = now - S.lastNear > 800 ? (items ? 'Move closer' : 'Look at the cups') : S.hold > 0 ? 'Hold still' : 'Stack the cups into one';
 }
 
-function drawEye(c, W, H, now) {
+// ---- drawing: white only ----------------------------------------------------------------
+function spaced(c, text, x, y, size, weight, track, align, alpha) {
+  c.font = `${weight} ${size}px ${FONT}`; c.textBaseline = 'middle'; c.textAlign = 'left'; c.globalAlpha = alpha ?? 1;
+  const ch = [...text], w = ch.map(k => c.measureText(k).width), total = w.reduce((a, b) => a + b, 0) + track * (ch.length - 1);
+  let cx = align === 'center' ? x - total / 2 : align === 'right' ? x - total : x;
+  ch.forEach((k, i) => { c.fillText(k, cx, y); cx += w[i] + track; });
+  c.globalAlpha = 1;
+  return total;
+}
+function shade(c, W, H, u) {
+  let g = c.createLinearGradient(0, 0, 0, 16 * u); g.addColorStop(0, 'rgba(0,0,0,.42)'); g.addColorStop(1, 'rgba(0,0,0,0)'); c.fillStyle = g; c.fillRect(0, 0, W, 16 * u);
+  g = c.createLinearGradient(0, H - 30 * u, 0, H); g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,.4)'); c.fillStyle = g; c.fillRect(0, H - 30 * u, W, 30 * u);
+  c.fillStyle = '#fff';
+}
+function brackets(c, x, y, w, h, u, alpha) {
+  const L = Math.max(1.6 * u, Math.min(w, h) * .2);
+  c.globalAlpha = alpha; c.strokeStyle = '#fff'; c.lineWidth = Math.max(1.2, .3 * u); c.lineCap = 'square'; c.beginPath();
+  c.moveTo(x, y + L); c.lineTo(x, y); c.lineTo(x + L, y);
+  c.moveTo(x + w - L, y); c.lineTo(x + w, y); c.lineTo(x + w, y + L);
+  c.moveTo(x + w, y + h - L); c.lineTo(x + w, y + h); c.lineTo(x + w - L, y + h);
+  c.moveTo(x + L, y + h); c.lineTo(x, y + h); c.lineTo(x, y + h - L);
+  c.stroke(); c.globalAlpha = 1;
+}
+const clock = s => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+
+function draw(c, W, H, now) {
   c.clearRect(0, 0, W, H);
-  const u = Math.min(W, H) / 100;
-  const s = Math.max(W / PW, H / PH), ox = (W - PW * s) / 2, oy = (H - PH * s) / 2;
-  const map = ([x, y]) => [x * s + ox, y * s + oy];
-  const fresh = S.last && now - S.lastAt < 400;
+  const u = Math.min(W, H) / 100, vw = video.videoWidth || 16, vh = video.videoHeight || 9;
+  const s = Math.max(W / vw, H / vh), ox = (W - vw * s) / 2, oy = (H - vh * s) / 2;
+  c.shadowColor = 'rgba(0,0,0,.45)'; c.shadowBlur = 6;
+  shade(c, W, H, u);
 
-  if (S.phase !== 'idle' && fresh) {
-    const m = S.last;
-    if (m.table) {
-      const H2 = homography(m.table.m), q = m.table.m.corners.map(p => map([p.x, p.y]));
-      c.strokeStyle = 'rgba(255,255,255,.9)'; c.lineWidth = .35 * u; c.beginPath(); q.forEach((p, i) => i ? c.lineTo(...p) : c.moveTo(...p)); c.closePath(); c.stroke();
-      const a = map(H2(-80, -12)), b = map(H2(80, -12));
-      c.setLineDash([2 * u, 1.4 * u]); c.lineWidth = .5 * u; c.beginPath(); c.moveTo(...a); c.lineTo(...b); c.stroke(); c.setLineDash([]);
-      const top = map(H2(0, 9));
-      rr(c, top[0] - 11 * u, top[1] - 4.6 * u, 22 * u, 3.6 * u, 1.8 * u); c.fillStyle = 'rgba(20,16,14,.75)'; c.fill();
-      txt(c, 'TABLE EDGE', top[0], top[1] - 2.8 * u, 2 * u, '#fff', 800, 'center');
-    }
-    for (const ch of m.chairs) {
-      const k = S.chairs[ch.id] || {}, H2 = homography(ch.m);
-      const box = [[-24, 18], [24, 18], [24, -66], [-24, -66]].map(p => map(H2(...p)));
-      const state = ch.dist == null ? null : k.state;
-      const col = state === 'in' ? '#3FB66B' : state === 'out' ? '#FF6B3D' : '#F5C842';
-      c.beginPath(); box.forEach((p, i) => i ? c.lineTo(...p) : c.moveTo(...p)); c.closePath();
-      c.fillStyle = state === 'in' ? 'rgba(63,182,107,.16)' : state === 'out' ? 'rgba(255,107,61,.16)' : 'rgba(245,200,66,.12)'; c.fill();
-      bracket(c, box, col, .7 * u);
-      const tag = ch.m.corners.map(p => map([p.x, p.y]));
-      c.strokeStyle = col; c.lineWidth = .3 * u; c.beginPath(); tag.forEach((p, i) => i ? c.lineTo(...p) : c.moveTo(...p)); c.closePath(); c.stroke();
-      const lab = state === 'in' ? `CHAIR ${String(ch.id).padStart(2, '0')}  IN ✓` :
-        ch.dist == null ? `CHAIR ${String(ch.id).padStart(2, '0')}  FIND THE TABLE TAG` :
-        `CHAIR ${String(ch.id).padStart(2, '0')}  ${Math.max(1, Math.round(ch.dist - CFG.inCm + 9))} CM TO GO`;
-      c.font = `900 ${2.4 * u}px ${getComputedStyle(document.body).getPropertyValue('--round')}`;
-      const tw = c.measureText(lab).width + 2.4 * u, at = box[0][1] < box[1][1] ? box[0] : box[1];
-      rr(c, box[0][0], at[1] - 5 * u, tw, 3.8 * u, 1 * u); c.fillStyle = col; c.fill();
-      txt(c, lab, box[0][0] + 1.2 * u, at[1] - 3.1 * u, 2.4 * u, state === 'in' || state === 'out' ? '#fff' : '#1F1E1D', 900);
-      if (CFG.debug) txt(c, `${ch.dist == null ? '-' : ch.dist.toFixed(1)} cm`, box[3][0], box[3][1] + 3 * u, 2.4 * u, '#fff', 800, 'left', .4 * u);
-    }
-  }
-
-  if (S.phase === 'idle') return;
-  // banner
-  const bx = 3 * u, by = 3 * u, title = S.phase === 'cal' ? 'Calibrate the tags' : 'Push in the chairs', sub = 'Filmed through your glass';
-  c.font = `900 ${4 * u}px ${getComputedStyle(document.body).getPropertyValue('--round')}`; const tw1 = c.measureText(title).width;
-  c.font = `700 ${1.9 * u}px ${getComputedStyle(document.body).getPropertyValue('--round')}`; const tw2 = c.measureText(sub).width;
-  rr(c, bx, by, Math.max(tw1, tw2) + 14 * u, 10 * u, 5 * u);
-  const g = c.createLinearGradient(0, by, 0, by + 10 * u); g.addColorStop(0, '#D97757'); g.addColorStop(1, '#A84F30');
-  c.fillStyle = g; c.fill(); c.lineWidth = .6 * u; c.strokeStyle = '#fff'; c.stroke();
-  c.beginPath(); c.arc(bx + 5 * u, by + 5 * u, 3.6 * u, 0, Math.PI * 2); c.fillStyle = '#2F7DE1'; c.fill(); c.stroke();
-  txt(c, '\u{1FA91}', bx + 5 * u, by + 5.3 * u, 3.6 * u, '#fff', 400, 'center');
-  txt(c, title, bx + 10.5 * u, by + 4 * u, 4 * u, '#fff', 900);
-  txt(c, sub, bx + 10.5 * u, by + 7.6 * u, 1.9 * u, '#FFE7D9', 700);
-  // REC
-  const rec = W > 110 * u ? 'REC · Footage to Allotment Robotics Partners' : 'REC · Allotment Robotics Partners';
-  c.font = `800 ${1.9 * u}px ${getComputedStyle(document.body).getPropertyValue('--round')}`;
-  const rw = c.measureText(rec).width + 7.4 * u, rx = W - rw - 3 * u;
-  rr(c, rx, 3 * u, rw, 5 * u, 2.5 * u); c.fillStyle = 'rgba(0,0,0,.55)'; c.fill();
-  c.beginPath(); c.arc(rx + 3 * u, 5.5 * u, 1.1 * u, 0, Math.PI * 2); c.fillStyle = (now / 600 | 0) % 2 ? '#FF3B30' : 'rgba(255,59,48,.35)'; c.fill();
-  txt(c, rec, rx + 5.2 * u, 5.6 * u, 1.9 * u, '#fff', 800);
-
-  if (S.phase === 'count') {
-    const left = 3 - Math.floor((now - S.countdown) / 1000);
-    c.fillStyle = 'rgba(0,0,0,.45)'; c.fillRect(0, 0, W, H);
-    txt(c, left > 0 ? String(left) : 'Go!', W / 2, H / 2 - 4 * u, 22 * u, '#D97757', 900, 'center', 2 * u);
-    txt(c, 'Put on your glass', W / 2, H / 2 + 12 * u, 4.4 * u, '#fff', 900, 'center');
+  if (S.phase === 'boot' || S.phase === 'nocam') {
+    spaced(c, S.phase === 'nocam' ? 'CAMERA NEEDED' : 'EARN & SAVE', W / 2, H / 2 - 3 * u, 1.9 * u, 600, .5 * u, 'center', .7);
+    spaced(c, S.msg, W / 2, H / 2 + 2 * u, 3.4 * u, 500, .05 * u, 'center');
+    if (S.phase === 'boot') { const k = (now / 1400) % 1; c.globalAlpha = .35; c.fillRect(W / 2 - 10 * u, H / 2 + 6 * u, 20 * u, .15 * u); c.globalAlpha = 1; c.fillRect(W / 2 - 10 * u + 16 * u * k, H / 2 + 5.9 * u, 4 * u, .35 * u); }
     return;
   }
-
-  // progress pips
-  const { ids, done } = progress();
-  if (S.phase !== 'cal') {
-    const n = Math.max(ids.length, 1), pw = n * 6 * u + 26 * u, px = (W - pw) / 2, py = 3 * u;
-    rr(c, px, py + 10.5 * u, pw, 6.4 * u, 3.2 * u); c.fillStyle = 'rgba(20,16,14,.74)'; c.fill();
-    ids.forEach((id, i) => { c.beginPath(); c.arc(px + 4 * u + i * 6 * u, py + 13.7 * u, 2 * u, 0, Math.PI * 2); c.fillStyle = S.chairs[id].state === 'in' ? '#3FB66B' : '#FF6B3D'; c.fill(); c.lineWidth = .4 * u; c.strokeStyle = '#fff'; c.stroke(); });
-    txt(c, ids.length ? `${done} of ${ids.length} chairs in` : 'Find a chair to tidy', px + n * 6 * u + 2.5 * u, py + 13.8 * u, 2.6 * u, '#fff', 900);
-  }
-  // earnings
-  if (S.phase === 'work' || S.phase === 'done') {
-    const ey = H - 33 * u;
-    rr(c, 3 * u, ey, 34 * u, 12.6 * u, 2.6 * u); c.fillStyle = 'rgba(20,16,14,.74)'; c.fill();
-    txt(c, 'EARNING NOW', 5.4 * u, ey + 2.6 * u, 1.8 * u, '#FFD9C4', 800);
-    txt(c, Math.round(S.work * TOKENS_PER_S).toLocaleString('en-AU') + ' tokens', 5.4 * u, ey + 6.4 * u, 3.8 * u, '#fff', 900);
-    txt(c, (S.work * CENTS_PER_S).toFixed(2) + ' cents', 5.4 * u, ey + 10 * u, 2.4 * u, '#FFD9C4', 800);
-  }
-  // guide
-  const gy = H - 17 * u;
-  c.save(); c.translate(3 * u, gy - 1 * u + Math.sin(now / 260) * .6 * u); c.scale(13 * u / 560, 13 * u / 560); c.translate(-30, -40);
-  c.fillStyle = '#D97757'; c.fill(STAR);
-  c.fillStyle = '#fff'; c.beginPath(); c.arc(280, 300, 34, 0, 7); c.arc(366, 300, 34, 0, 7); c.fill();
-  c.fillStyle = '#1F1E1D'; c.beginPath(); c.arc(286, 304, 16, 0, 7); c.arc(372, 304, 16, 0, 7); c.fill(); c.restore();
-  const line = S.phase === 'done' ? 'All chairs in. The robots thank you.' : S.line;
-  c.font = `800 ${2.9 * u}px ${getComputedStyle(document.body).getPropertyValue('--round')}`;
-  const lw = Math.min(W - 24 * u, c.measureText(line).width + 6 * u);
-  rr(c, 18 * u, gy + 1.5 * u, lw, 8 * u, 3 * u); c.fillStyle = '#fff'; c.fill();
-  txt(c, line, 21 * u, gy + 5.5 * u, 2.9 * u, '#1F1E1D', 800);
-
-  // pops
-  S.pops = S.pops.filter(p => now - p.at < 950);
-  for (const p of S.pops) {
-    const k = (now - p.at) / 950, sc = k < .22 ? .2 + k / .22 * .94 : k < .34 ? 1.14 - (k - .22) / .12 * .14 : 1;
-    c.save(); c.globalAlpha = k > .78 ? 1 - (k - .78) / .22 : 1; c.translate(W / 2, H * .42 - k * 4 * u); c.scale(sc, sc);
-    txt(c, p.t, 0, 0, 12 * u, '#D97757', 900, 'center', 1.6 * u); c.restore();
-  }
-  if (CFG.debug) txt(c, `proc ${S.procMs | 0} ms · f ${CFG.fx} · in < ${CFG.inCm} cm · ${PW}x${PH}`, W / 2, H - 2 * u, 1.8 * u, '#fff', 700, 'center', .3 * u);
-
-  if (S.phase === 'done') drawReceipt(c, W, H, u, now);
-}
-
-function drawReceipt(c, W, H, u, now) {
-  const k = Math.min(1, (now - S.doneAt) / 600), e = 1 - Math.pow(1 - k, 3);
-  c.fillStyle = `rgba(10,8,7,${.6 * e})`; c.fillRect(0, 0, W, H);
-  const w = Math.min(W * .62, 64 * u), h = 74 * u, x = (W - w) / 2, y = (H - h) / 2 + (1 - e) * H * .6;
-  c.fillStyle = '#fff'; c.fillRect(x, y, w, h);
-  const mono = 'ui-monospace,"SF Mono",Menlo,monospace', f = (s, yy, size, wgt = 400, al = 'left', xx = x + 4 * u) => { c.font = `${wgt} ${size}px ${mono}`; c.textAlign = al; c.textBaseline = 'middle'; c.fillStyle = '#000'; c.fillText(s, xx, yy); };
-  const secs = Math.round(S.work), mt = (S.work * TOKENS_PER_S / 1e6), cents = S.work * CENTS_PER_S;
-  f('Allotment', y + 5 * u, 3 * u, 800, 'center', x + w / 2);
-  f('Task complete.', y + 10 * u, 3.4 * u, 800, 'center', x + w / 2);
-  const dash = yy => { c.setLineDash([.8 * u, .6 * u]); c.strokeStyle = '#000'; c.lineWidth = .25 * u; c.beginPath(); c.moveTo(x + 3 * u, yy); c.lineTo(x + w - 3 * u, yy); c.stroke(); c.setLineDash([]); };
-  dash(y + 14 * u);
-  const rows = [['Task', 'Push in the chairs'], ['Chairs', String(progress().ids.length)], ['Filmed', `${Math.floor(secs / 60)} min ${String(secs % 60).padStart(2, '0')} s`], ['Earned', `${mt.toFixed(2)} MTok`], ['Credit', `$${(cents / 100).toFixed(2)}`], ['Progress', `${Math.max(1, Math.round(S.work / RESET_S * 100))}% of a reset`]];
-  rows.forEach(([a, b], i) => { f(a, y + (18.5 + i * 4.6) * u, 2.5 * u); f(b, y + (18.5 + i * 4.6) * u, 2.5 * u, 800, 'right', x + w - 4 * u); });
-  dash(y + 46 * u);
-  f('Your footage is helping a robot', y + 50 * u, 2.4 * u);
-  f('learn to push in chairs. Thank you.', y + 54 * u, 2.4 * u);
-  f('Tap to earn again', y + 61 * u, 2.6 * u, 800, 'center', x + w / 2);
-  c.font = `500 ${1.5 * u}px system-ui,sans-serif`; c.textAlign = 'center'; c.fillStyle = '#666';
-  c.fillText('Design fiction by an IDEA9201 student group. Nothing is recorded or uploaded.', x + w / 2, y + 69 * u);
-}
-
-// ---- main loop -------------------------------------------------------------------------
-let lastProc = 0, lastT = performance.now();
-function frame(now) {
-  const dt = Math.min(.1, (now - lastT) / 1000); lastT = now;
-  const v = videos[0];
-  if (S.phase !== 'idle' && v.readyState >= 2 && posit) {
-    if (now - lastProc > Math.max(40, (S.procMs || 0) * 1.3)) {
-      lastProc = now;
-      const t0 = performance.now();
-      pctx.drawImage(v, 0, 0, PW, PH);
-      judge(measure(pctx.getImageData(0, 0, PW, PH)), now);
-      S.procMs = performance.now() - t0;
+  // objects
+  const fading = S.phase === 'done' || S.phase === 'fail';
+  tracks.sort((a, b) => a.box.x - b.box.x).forEach((t, i) => {
+    const b = t.box;
+    for (const k of ['x', 'y', 'w', 'h']) b[k] += (t.tgt[k] - b[k]) * .35;
+    const x = b.x * s + ox, y = b.y * s + oy, w = b.w * s, h = b.h * s;
+    const alpha = (fading ? .35 : 1) * Math.max(0, 1 - (now - t.seen) / 700);
+    brackets(c, x, y, w, h, u, alpha);
+    const stack = S.phase === 'task' && tracks.length === 1 && S.progress > 0;
+    spaced(c, stack ? 'STACK' : `CUP ${String(i + 1).padStart(2, '0')}`, x, y - 1.7 * u, 1.6 * u, 600, .35 * u, 'left', alpha * .9);
+    if (S.phase === 'task' && S.hold > 0 && tracks.length === 1) {       // verifying: a thin ring closes around the stack
+      c.lineWidth = .3 * u; c.strokeStyle = '#fff'; c.beginPath();
+      c.arc(x + w / 2, y + h / 2, Math.max(w, h) * .72, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * Math.min(1, S.hold / CFG.hold)); c.stroke();
     }
+  });
+  // reticle
+  if (S.phase === 'scan') {
+    const r = 2.6 * u, a0 = now / 700;
+    c.lineWidth = .25 * u; c.strokeStyle = 'rgba(255,255,255,.75)';
+    for (let i = 0; i < 3; i++) { c.beginPath(); c.arc(W / 2, H / 2, r, a0 + i * 2.09, a0 + i * 2.09 + 1.2); c.stroke(); }
+  } else if (S.phase === 'task') {
+    c.globalAlpha = .55; c.beginPath(); c.arc(W / 2, H / 2, .45 * u, 0, 7); c.fill(); c.globalAlpha = 1;
   }
-  if (S.phase === 'count' && now - S.countdown > 3400) { S.phase = 'work'; S.start = now; say('Push in the chairs. Keep the table tag in view.'); }
-  if (S.phase === 'work') {
-    S.work += dt;
-    if (now - S.tableAt > 2500) voiceOnce('table', 'Look at the table tag.');
-    const { ids, done } = progress();
-    if (!ids.length && S.work > 8) voiceOnce('none', 'Everything looks tidy. Ask for a chair to be pulled out.', 15000);
-    if (ids.length && done === ids.length) { S.hold += dt; if (S.hold > .8) finish(); } else S.hold = 0;
+  // corners of the frame
+  spaced(c, 'EARN & SAVE', 4 * u, 5 * u, 1.7 * u, 600, .45 * u, 'left', .9);
+  if (S.phase === 'task') {
+    const on = Math.floor(now / 600) % 2;
+    c.globalAlpha = on ? 1 : .3; c.beginPath(); c.arc(W - 4 * u - .7 * u, 5 * u, .7 * u, 0, 7); c.fill(); c.globalAlpha = 1;
+    spaced(c, `REC  ${clock(S.filmed)}`, W - 6.4 * u, 5 * u, 1.7 * u, 600, .3 * u, 'right', .95);
+  } else spaced(c, 'STANDBY', W - 4 * u, 5 * u, 1.7 * u, 600, .45 * u, 'right', .6);
+
+  if (S.phase === 'done' || S.phase === 'fail') { card(c, W, H, u, now); return; }
+  // bottom: task, guidance, progress
+  const by = H - 15 * u;
+  spaced(c, 'TASK 01  ·  STACK THE CUPS', W / 2, by - 4 * u, 1.5 * u, 600, .5 * u, 'center', .6);
+  spaced(c, S.msg, W / 2, by, 3.4 * u, 500, .04 * u, 'center');
+  if (S.phase === 'task') {
+    const n = Math.max(1, S.nStart - 1), seg = 6 * u, gap = 1.2 * u, tot = n * seg + (n - 1) * gap;
+    for (let i = 0; i < n; i++) { c.globalAlpha = i < S.progress ? 1 : .3; c.fillRect(W / 2 - tot / 2 + i * (seg + gap), by + 4 * u, seg, .3 * u); }
+    c.globalAlpha = 1;
+    spaced(c, 'PENDING  ·  PAID ONLY WHEN VERIFIED', W / 2, by + 7.2 * u, 1.3 * u, 600, .35 * u, 'center', .55);
   }
-  if (S.phase === 'done' && now - S.doneAt > 25000) toStart();
-  $('turn').style.display = S.phase !== 'idle' && innerHeight > innerWidth * 1.05 && CFG.stereo ? 'flex' : 'none';
-  const eyes = CFG.stereo && S.phase !== 'idle' ? 2 : 1;
-  for (let i = 0; i < eyes; i++) {
-    const cv = canvases[i], r = cv.getBoundingClientRect(), dpr = Math.min(2, devicePixelRatio || 1);
-    if (cv.width !== Math.round(r.width * dpr) || cv.height !== Math.round(r.height * dpr)) { cv.width = Math.round(r.width * dpr); cv.height = Math.round(r.height * dpr); }
-    const c = cv.getContext('2d'); c.setTransform(dpr, 0, 0, dpr, 0, 0);
-    drawEye(c, r.width, r.height, now);
+  spaced(c, 'FOOTAGE TO ALLOTMENT ROBOTICS PARTNERS', W / 2, H - 3.2 * u, 1.2 * u, 600, .4 * u, 'center', .45);
+  if (CFG.debug) {
+    const A = S.A;
+    spaced(c, `${S.phase}  items ${A ? A.items.length : '-'}  near ${A ? A.near : '-'}  hands ${A ? A.handsOver : '-'}  steady ${steadyCount(now)}  ${S.ms | 0} ms  ${vw}x${vh}`, W / 2, 10 * u, 1.5 * u, 500, 0, 'center', .9);
+  }
+}
+function card(c, W, H, u, now) {
+  const k = Math.min(1, (now - S.doneAt) / 500);
+  c.shadowBlur = 0; c.fillStyle = `rgba(0,0,0,${.55 * k})`; c.fillRect(0, 0, W, H); c.fillStyle = '#fff'; c.shadowBlur = 8;
+  const y = H / 2 - 9 * u;
+  if (S.phase === 'fail') {
+    spaced(c, 'NOT VERIFIED', W / 2, y + 4 * u, 2 * u, 600, .6 * u, 'center', k);
+    spaced(c, 'No credit for this session', W / 2, y + 11 * u, 3.2 * u, 400, 0, 'center', k);
+    return;
+  }
+  const cr = S.credit;
+  spaced(c, 'VERIFIED', W / 2, y, 2 * u, 600, .7 * u, 'center', k);
+  c.globalAlpha = k; c.fillRect(W / 2 - 6 * u, y + 3 * u, 12 * u, .15 * u); c.globalAlpha = 1;
+  spaced(c, `$${cr.dollars.toFixed(2)}`, W / 2, y + 11 * u, 11 * u, 200, 0, 'center', k);
+  spaced(c, `${cr.mtok.toFixed(2)} MTOK  ·  ${clock(cr.secs)} FILMED  ·  ${Math.max(1, Math.round(cr.secs / RESET_S * 100))}% OF A RESET`, W / 2, y + 19 * u, 1.6 * u, 600, .35 * u, 'center', .85 * k);
+  spaced(c, 'Your footage is teaching a robot to stack cups. Thank you.', W / 2, y + 24.5 * u, 2.2 * u, 400, 0, 'center', .8 * k);
+  spaced(c, 'Licensed to Allotment Robotics Partners under Terms, clause 14.3.', W / 2, y + 28.5 * u, 1.4 * u, 400, 0, 'center', .55 * k);
+  spaced(c, 'Design fiction by an IDEA9201 student group. Nothing is recorded or uploaded.', W / 2, H - 3.2 * u, 1.1 * u, 400, 0, 'center', .4 * k);
+}
+
+// ---- start: camera first, nothing to press -----------------------------------------------
+async function start() {
+  S.msg = 'Starting your glass';
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } } });
+    for (const e of eyes) { e.v.srcObject = stream; e.v.play().catch(() => {}); }
+  } catch (e) { S.phase = 'nocam'; S.msg = 'Allow camera access, then reload'; return; }
+  try { await navigator.wakeLock?.request('screen'); } catch (e) {}
+  try {
+    const vision = await FilesetResolver.forVisionTasks('./vendor/wasm');
+    const opts = d => ({ baseOptions: { modelAssetPath: './models/efficientdet_lite0.tflite', delegate: d }, runningMode: 'VIDEO', scoreThreshold: CFG.score, maxResults: 12 });
+    try { detector = await ObjectDetector.createFromOptions(vision, opts(CFG.delegate)); }
+    catch (e) { detector = await ObjectDetector.createFromOptions(vision, opts('CPU')); }
+  } catch (e) { S.phase = 'nocam'; S.msg = 'No supply to your glass. Check the connection, then reload'; return; }
+  S.phase = 'scan';
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') navigator.wakeLock?.request('screen').catch(() => {}); });
+
+let last = performance.now(), lastDet = 0, lastTs = 0;
+function frame(now) {
+  const dt = Math.min(.1, (now - last) / 1000); last = now;
+  if (detector && video.readyState >= 2 && now - lastDet > 66) {
+    lastDet = now;
+    const t0 = performance.now(), ts = Math.max(lastTs + 1, Math.round(now)); lastTs = ts;
+    try {
+      const r = detector.detectForVideo(video, ts);
+      S.A = analyse(r.detections, video.videoWidth, video.videoHeight, now); S.At = now;
+      updateTracks(S.A.items, now);
+    } catch (e) {}
+    S.ms = performance.now() - t0;
+  }
+  if (S.phase !== 'boot' && S.phase !== 'nocam') step(now, dt);
+  for (const e of eyes) {
+    const r = e.c.getBoundingClientRect(), dpr = Math.min(2, devicePixelRatio || 1);
+    if (e.c.width !== Math.round(r.width * dpr) || e.c.height !== Math.round(r.height * dpr)) { e.c.width = Math.round(r.width * dpr); e.c.height = Math.round(r.height * dpr); }
+    const c = e.c.getContext('2d'); c.setTransform(dpr, 0, 0, dpr, 0, 0);
+    draw(c, r.width, r.height, now);
   }
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
-
-// test hook: measure a still frame without the camera
-window.__glass = { measure: img => { setFrame(img.width, img.height); return measure(img); }, CFG, S };
+start();
+window.__glass = { S, CFG };
 </script>
 </body>
 </html>
