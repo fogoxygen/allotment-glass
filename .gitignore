@@ -1,0 +1,7 @@
+# Only the files a phone needs are published. Test scene, print sources and notes stay local.
+src/
+print/
+RUN.md
+test_preview.jpg
+publish.sh
+.DS_Store
